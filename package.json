@@ -1,0 +1,18 @@
+{
+  "name": "lbmate",
+  "version": "0.1.0",
+  "description": "Long Beach NY <-> Manhattan commute planner. LIRR real-time + Long Beach municipal bus.",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "gtfs-realtime-bindings": "^1.1.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
