@@ -1,6 +1,6 @@
 # LBMate
 
-An iOS-style PWA for commuting between **730 W Broadway, Long Beach NY** and **20 West St, FiDi Manhattan**.
+An iOS-style PWA for commuting between **the Sandcastles** (730 W Broadway, Long Beach NY) and **20 West St, FiDi Manhattan**.
 
 Pulls live LIRR data from the MTA GTFS-realtime feed and pairs each train with the optimal Long Beach municipal bus to/from your stop (**Stop H — Grand & W. Beech**).
 

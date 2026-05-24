@@ -39,10 +39,10 @@ async function fetchPlan(mode) {
 function setHero(mode) {
   if (mode === 'home') {
     $('#hero-title').textContent = 'Going Home';
-    $('#hero-sub').textContent = 'Penn Station → 730 W Broadway';
+    $('#hero-sub').textContent = 'Penn Station → the Sandcastles';
   } else {
     $('#hero-title').textContent = 'Going to Work';
-    $('#hero-sub').textContent = '730 W Broadway → 20 West St';
+    $('#hero-sub').textContent = 'the Sandcastles → 20 West St';
   }
 }
 
@@ -141,7 +141,7 @@ function renderHomeCard(o, recommended) {
         <div class="leg">
           <div class="leg-icon walk">${icons.walk}</div>
           <div class="leg-body">
-            <div class="leg-title">Walk · Stop H → 730 W Broadway</div>
+            <div class="leg-title">Walk · Stop H → the Sandcastles</div>
             <div class="leg-detail">≈ 10 min</div>
           </div>
           <div class="leg-time">${o.arriveHomeLabel}</div>
@@ -189,7 +189,7 @@ function renderWorkCard(o, recommended) {
       <div class="leg">
         <div class="leg-icon walk">${icons.walk}</div>
         <div class="leg-body">
-          <div class="leg-title">Walk · 730 W Broadway → Stop H</div>
+          <div class="leg-title">Walk · the Sandcastles → Stop H</div>
           <div class="leg-detail">10 min walk + 10 min buffer</div>
         </div>
         <div class="leg-time">${o.leaveHomeLabel}</div>
