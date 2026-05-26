@@ -4,7 +4,7 @@ const $$ = (sel) => document.querySelectorAll(sel);
 function initialMode() {
   const p = new URLSearchParams(location.search).get('mode');
   if (p === 'work' || p === 'home') return p;
-  // Default by time-of-day: before 1pm NY = work, after = home
+  // Default by time-of-day: before 1pm NY = to Manhattan, after = to Long Beach
   const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }).format(new Date())) % 24;
   return h < 13 ? 'work' : 'home';
 }
@@ -14,10 +14,10 @@ const state = {
   lastFetch: 0,
   autoRefreshTimer: null,
   inFlight: null,
+  countdownEpoch: null,
 };
 
 const icons = {
-  walk: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="2"/><path d="M14 21l1-4 3-2 -3-4-2 1-2 4"/><path d="M9 10l-3 5"/></svg>`,
   bus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/><circle cx="7" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>`,
   train: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14"/><path d="M8 20l-2 2M16 20l2 2"/></svg>`,
   subway: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="15" rx="3"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M7 20l-2 2M17 20l2 2"/></svg>`,
@@ -38,11 +38,11 @@ async function fetchPlan(mode) {
 
 function setHero(mode) {
   if (mode === 'home') {
-    $('#hero-title').textContent = 'Going Home';
-    $('#hero-sub').textContent = 'Penn Station → the Sandcastles';
+    $('#hero-title').textContent = 'To Long Beach';
+    $('#hero-sub').textContent = 'Next LIRR from Penn';
   } else {
-    $('#hero-title').textContent = 'Going to Work';
-    $('#hero-sub').textContent = 'the Sandcastles → 20 West St';
+    $('#hero-title').textContent = 'To Manhattan';
+    $('#hero-sub').textContent = 'Next bus at Stop H';
   }
 }
 
@@ -57,15 +57,6 @@ function setSegmented(mode) {
 function fmtClock(epoch) {
   return new Date(epoch * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
 }
-function fmtRel(epoch) {
-  const diff = Math.round((epoch * 1000 - Date.now()) / 60000);
-  if (diff < -1) return `${Math.abs(diff)} min ago`;
-  if (diff <= 0) return 'now';
-  if (diff < 60) return `in ${diff} min`;
-  const h = Math.floor(diff / 60);
-  const m = diff % 60;
-  return `in ${h}h ${m}m`;
-}
 function fmtDuration(secs) {
   const m = Math.round(secs / 60);
   if (m < 60) return `${m} min`;
@@ -73,12 +64,12 @@ function fmtDuration(secs) {
 }
 
 function renderHome(options) {
-  if (!options.length) return emptyState('No trains heading home in range.');
+  if (!options.length) return emptyState('No trains heading to Long Beach in range.');
   return options.map((o, i) => renderHomeCard(o, i === 0)).join('');
 }
 
 function renderWork(options) {
-  if (!options.length) return emptyState('No buses scheduled in range.');
+  if (!options.length) return emptyState('No buses paired with a Manhattan train in range.');
   return options.map((o, i) => renderWorkCard(o, i === 0)).join('');
 }
 
@@ -105,16 +96,14 @@ function busBadges(bus) {
 }
 
 function renderHomeCard(o, recommended) {
-  const noBus = o.noBusTonight;
+  const noBus = o.noBus;
   const trainDur = fmtDuration(o.train.arrEpoch - o.train.depEpoch);
-  const headline = noBus ? fmtClock(o.train.depEpoch) : o.arriveHomeLabel;
-  const headlineLabel = noBus ? 'Train' : 'Arrive home';
   return `
     <article class="card ${recommended ? 'recommended' : ''}">
-      <span class="card-time-label">${headlineLabel}</span>
+      <span class="card-time-label">Train leaves Penn</span>
       <div class="card-headline">
-        <div class="card-time">${headline}</div>
-        <div class="card-sub">${noBus ? '· walk/cab needed' : `· bus + LIRR · ${fmtRel(o.train.depEpoch)}`}</div>
+        <div class="card-time">${fmtClock(o.train.depEpoch)}</div>
+        <div class="card-sub">→ Long Beach ${fmtClock(o.train.arrEpoch)} · ${trainDur}</div>
       </div>
 
       <div class="leg">
@@ -127,29 +116,20 @@ function renderHomeCard(o, recommended) {
       </div>
 
       ${noBus ? `
-        <div class="no-bus-notice">No connecting Long Beach bus tonight. Plan ~15 min walk or grab a cab from the station.</div>
+        <div class="no-bus-notice">No connecting Long Beach bus for this train. Walk or cab from the station.</div>
       ` : `
         <div class="leg">
           <div class="leg-icon bus">${icons.bus}</div>
           <div class="leg-body">
             <div class="leg-title">Long Beach Bus · LIRR → Stop H</div>
-            <div class="leg-detail">Board at LIRR · ${o.transferMin}-min transfer ${busBadges(o.bus)}</div>
+            <div class="leg-detail">${o.transferMin}-min transfer at LIRR ${busBadges(o.bus)}</div>
           </div>
-          <div class="leg-time">${o.bus.label}</div>
-        </div>
-
-        <div class="leg">
-          <div class="leg-icon walk">${icons.walk}</div>
-          <div class="leg-body">
-            <div class="leg-title">Walk · Stop H → the Sandcastles</div>
-            <div class="leg-detail">≈ 10 min</div>
-          </div>
-          <div class="leg-time">${o.arriveHomeLabel}</div>
+          <div class="leg-time">${o.bus.label}<span class="end">→ ${fmtClock(o.arriveStopHEpoch)}</span></div>
         </div>
 
         <div class="card-summary">
           <div class="summary-cell"><span>Transfer slack</span><strong>${o.transferMin} min</strong></div>
-          <div class="summary-cell"><span>Total trip</span><strong>${fmtDuration(o.arriveHomeEpoch - o.train.depEpoch)}</strong></div>
+          <div class="summary-cell"><span>At Stop H</span><strong>${o.arriveStopHLabel}</strong></div>
         </div>
       `}
     </article>
@@ -157,42 +137,13 @@ function renderHomeCard(o, recommended) {
 }
 
 function renderWorkCard(o, recommended) {
-  if (!o.train) {
-    return `
-      <article class="card">
-        <span class="card-time-label">Bus only</span>
-        <div class="card-headline">
-          <div class="card-time">${o.bus.label}</div>
-          <div class="card-sub">· bus arrives Stop H · no train pairing</div>
-        </div>
-        <div class="leg">
-          <div class="leg-icon bus">${icons.bus}</div>
-          <div class="leg-body"><div class="leg-title">Catch bus at Stop H</div><div class="leg-detail">Leave home by ${o.leaveHomeLabel}</div></div>
-          <div class="leg-time">${o.bus.label}</div>
-        </div>
-      </article>
-    `;
-  }
   const trainDur = fmtDuration(o.train.arrEpoch - o.train.depEpoch);
-  const headlineTime = o.leaveNow ? 'Leave now' : o.leaveHomeLabel;
-  const subText = o.leaveNow
-    ? `· bus at ${o.bus.label} · arrive office ≈ ${o.arriveOfficeLabel}`
-    : `· arrive office ≈ ${o.arriveOfficeLabel} · ${fmtRel(o.leaveHomeEpoch)}`;
   return `
     <article class="card ${recommended ? 'recommended' : ''}">
-      <span class="card-time-label">${o.leaveNow ? 'Catchable now' : 'Leave home'}</span>
+      <span class="card-time-label">Bus at Stop H</span>
       <div class="card-headline">
-        <div class="card-time">${headlineTime}</div>
-        <div class="card-sub">${subText}</div>
-      </div>
-
-      <div class="leg">
-        <div class="leg-icon walk">${icons.walk}</div>
-        <div class="leg-body">
-          <div class="leg-title">Walk · the Sandcastles → Stop H</div>
-          <div class="leg-detail">10 min walk + 10 min buffer</div>
-        </div>
-        <div class="leg-time">${o.leaveHomeLabel}</div>
+        <div class="card-time">${o.bus.label}</div>
+        <div class="card-sub">→ office ≈ ${o.arriveOfficeLabel}</div>
       </div>
 
       <div class="leg">
@@ -223,11 +174,48 @@ function renderWorkCard(o, recommended) {
       </div>
 
       <div class="card-summary">
-        <div class="summary-cell"><span>Total trip</span><strong>${fmtDuration(o.arriveOfficeEpoch - o.leaveHomeEpoch)}</strong></div>
-        <div class="summary-cell"><span>Train slack</span><strong>${Math.round((o.train.depEpoch - o.arriveLirrEpoch) / 60)} min</strong></div>
+        <div class="summary-cell"><span>Train slack</span><strong>${o.transferMin} min</strong></div>
+        <div class="summary-cell"><span>At office</span><strong>${o.arriveOfficeLabel}</strong></div>
       </div>
     </article>
   `;
+}
+
+function setCountdownAnchor(mode, options) {
+  if (!options || !options.length) { state.countdownEpoch = null; return; }
+  const first = options[0];
+  state.countdownEpoch = mode === 'work' ? first.bus?.epoch : first.train?.depEpoch;
+}
+
+function tickCountdown() {
+  const el = $('#hero-countdown');
+  const when = $('#hero-when');
+  if (!el) return;
+  if (!state.countdownEpoch) {
+    el.textContent = '—';
+    el.classList.remove('now');
+    when.textContent = '';
+    return;
+  }
+  const diffMs = state.countdownEpoch * 1000 - Date.now();
+  if (diffMs <= 0) {
+    el.textContent = 'Now';
+    el.classList.add('now');
+    when.textContent = '';
+    return;
+  }
+  el.classList.remove('now');
+  const totalSec = Math.floor(diffMs / 1000);
+  const mins = Math.floor(totalSec / 60);
+  const secs = totalSec % 60;
+  if (mins < 60) {
+    el.textContent = `${mins}:${String(secs).padStart(2, '0')}`;
+  } else {
+    const h = Math.floor(mins / 60);
+    el.textContent = `${h}h ${String(mins % 60).padStart(2, '0')}m`;
+  }
+  const target = new Date(state.countdownEpoch * 1000);
+  when.textContent = `at ${target.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })}`;
 }
 
 async function render() {
@@ -240,6 +228,8 @@ async function render() {
   try {
     const data = await fetchPlan(state.mode);
     main.innerHTML = state.mode === 'home' ? renderHome(data.options) : renderWork(data.options);
+    setCountdownAnchor(state.mode, data.options);
+    tickCountdown();
     state.lastFetch = Date.now();
     updateStatus(true);
   } catch (e) {
@@ -271,22 +261,26 @@ function bindEvents() {
     }
   });
 
-  // Refresh on tab focus
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && Date.now() - state.lastFetch > 20_000) {
       render();
     }
   });
 
-  // Auto refresh every 45 seconds while visible
   setInterval(() => {
     if (document.visibilityState === 'visible') render();
   }, 45_000);
+
+  setInterval(tickCountdown, 1000);
 }
 
-// Register SW (best-effort; skip in dev if blocked)
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
+  const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  if (isLocal) {
+    navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())).catch(() => {});
+  } else {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
 }
 
 bindEvents();

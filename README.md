@@ -6,25 +6,26 @@ Pulls live LIRR data from the MTA GTFS-realtime feed and pairs each train with t
 
 ## What it does
 
-- **Going Home** — Pairs upcoming NYK→LBH trains with the next bus leaving the LIRR station, and tells you when you'll be home.
-- **Going to Work** — Walks back from your bus options at Stop H: when to leave the house, which bus to catch, which train it connects to, when you'll be at Penn.
-- Live MTA real-time overlay (delays / cancellations shown on the train card).
-- Long Beach municipal bus schedule baked in from the [city brochure PDF](https://www.longbeachny.gov/transportation).
-- Buffers built in: 10-min walk to stop + 10-min show-up-early = leave 20 min before scheduled bus.
+The hero is a **live ticking countdown** to one real transit anchor:
+
+- **To Manhattan** — countdown to the next bus at Stop H. Cards show that bus → the LIRR train it catches → subway → office arrival estimate.
+- **To Long Beach** — countdown to the next LIRR departure from Penn. Cards show that train → the Long Beach bus it pairs with → arrival time at Stop H.
+
+Pairing logic is trains-as-gate: a bus only shows if it connects to an upcoming train. Live MTA real-time overlay marks delays / cancellations on the train card. Long Beach municipal bus schedule is baked in from the [city brochure PDF](https://www.longbeachny.gov/transportation), and the app uses the **Sunday/weekend schedule on federal holidays** (fixed and floating).
+
+The walk between home and Stop H is intentionally **not modeled** — the countdown shows the real transit time, you subtract your own walk time.
 
 ## Run locally
 
 ```bash
 npm install
 npm start
-# open http://localhost:3000
+# open http://localhost:3000  (or http://127.0.0.1:3000)
 ```
 
-To use it from your phone on the same Wi-Fi: open `http://<your-mac-ip>:3000` in Safari, tap Share → Add to Home Screen.
+The service worker is **disabled on localhost / 127.0.0.1** so edits show up immediately. On a phone on the same Wi-Fi: open `http://<your-mac-ip>:3000` in Safari, tap Share → Add to Home Screen.
 
 ## Deploy to Google Cloud Run
-
-You have Claude wired to GCP, so this is one command after auth:
 
 ```bash
 gcloud run deploy lbmate \
@@ -36,7 +37,9 @@ gcloud run deploy lbmate \
   --max-instances 2
 ```
 
-Then open the printed `https://lbmate-…run.app` URL in Safari on your iPhone and tap **Share → Add to Home Screen**. The PWA manifest, service worker, and apple-touch-icons are already set up.
+Then open the printed `https://lbmate-…run.app` URL in Safari on your iPhone and tap **Share → Add to Home Screen**. The PWA manifest, service worker, and apple-touch-icons are wired up.
+
+If a deploy doesn't show up in an installed PWA, bump the `CACHE` const in `public/sw.js` so the new shell evicts the old cache.
 
 ## Architecture
 
@@ -45,21 +48,23 @@ public/         iOS-styled PWA shell (HTML/CSS/JS), manifest, service worker
 server.js       Express + static + JSON APIs
 lib/gtfs.js     LIRR static GTFS loader (Long Beach branch trips only)
 lib/realtime.js MTA GTFS-realtime fetcher (25s cache)
-lib/bus.js      Long Beach bus schedule lookup (weekday / weekend)
+lib/bus.js      Long Beach bus schedule lookup (weekday / weekend + holidays)
 lib/planner.js  Bus↔train pairing logic
 data/gtfs/      MTA LIRR static GTFS (refresh every few weeks)
-data/bus_schedule.json  Baked-in stop H times
+data/bus_schedule.json  Baked-in West End loop times
 ```
 
 ### API endpoints
 
 | | |
 |---|---|
-| `GET /api/plan/home` | Trains NYK→LBH paired with next bus to Stop H |
-| `GET /api/plan/work` | Buses at Stop H paired with next LIRR train to Penn |
+| `GET /api/plan/work` | "To Manhattan" — buses at Stop H paired with the next LIRR train to Penn |
+| `GET /api/plan/home` | "To Long Beach" — trains NYK→LBH paired with the next bus from LIRR |
 | `GET /api/lirr/next?dir=toCity\|toLB&n=6` | Raw upcoming LIRR options with RT overlay |
 | `GET /api/bus/next?stop=H\|A&n=6` | Raw upcoming bus times at a given stop |
 | `GET /api/health` | Liveness |
+
+(Internal route names `home`/`work` predate the "To Long Beach"/"To Manhattan" relabel — kept for backwards compatibility with the SW-cached shell.)
 
 ### Refreshing the LIRR static GTFS
 
@@ -70,13 +75,15 @@ curl -L https://web.mta.info/developers/data/lirr/google_transit.zip -o /tmp/lir
 rm data/gtfs/* && unzip -d data/gtfs /tmp/lirr.zip && rm data/gtfs/shapes.txt
 ```
 
+### Refreshing the bus schedule
+
+`data/bus_schedule.json` is hand-transcribed from the City of Long Beach transportation brochure. When a new brochure ships, re-pull from longbeachny.gov and update both `weekday.runs` and `weekend.runs`. The `waitsForTrain: true` flag is the `•` bullet next to the A (LIRR) column in the PDF. If the brochure changes which federal holidays it observes, update `FIXED_HOLIDAYS` and `isFloatingHolidayNy` in `lib/bus.js`.
+
 ## Assumptions to tune
 
-These are tuned in `lib/planner.js`:
+Constants live at the top of `lib/planner.js`:
 
-- `WALK_HOME_TO_STOP_H_MIN = 10`
-- `SHOW_UP_EARLY_MIN = 10`
 - `SUBWAY_PENN_TO_FIDI_MIN = 25`
+- `BUS_H_TO_LIRR_MIN = 7`
 - `MIN_BUS_TO_TRAIN_TRANSFER_MIN = 4`
-
-Edit and restart.
+- `MIN_TRAIN_TO_BUS_TRANSFER_MIN = 1`
