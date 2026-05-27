@@ -1,5 +1,5 @@
 // Cache the app shell. Always go network-first for /api/*.
-const CACHE = 'lbmate-shell-v2';
+const CACHE = 'lbmate-shell-v3';
 const SHELL = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.json'];
 
 self.addEventListener('install', (e) => {

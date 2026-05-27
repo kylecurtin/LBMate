@@ -1,49 +1,96 @@
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
+// Internal mode names match the user-facing semantics now.
+// Legacy URLs with ?mode=work|home are still honored.
 function initialMode() {
   const p = new URLSearchParams(location.search).get('mode');
-  if (p === 'work' || p === 'home') return p;
-  // Default by time-of-day: before 1pm NY = to Manhattan, after = to Long Beach
+  if (p === 'manhattan' || p === 'work') return 'manhattan';
+  if (p === 'longbeach' || p === 'home') return 'longbeach';
+  // Default by time-of-day: before 1pm NY = heading to Manhattan, otherwise heading back to Long Beach
   const h = Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', hour12: false }).format(new Date())) % 24;
-  return h < 13 ? 'work' : 'home';
+  return h < 13 ? 'manhattan' : 'longbeach';
 }
 
 const state = {
   mode: initialMode(),
   lastFetch: 0,
-  autoRefreshTimer: null,
   inFlight: null,
   countdownEpoch: null,
+  items: [],
 };
 
-const icons = {
-  bus: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M3 10h18"/><circle cx="7" cy="20" r="1.4"/><circle cx="17" cy="20" r="1.4"/></svg>`,
-  train: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="14" rx="3"/><path d="M5 11h14"/><path d="M8 20l-2 2M16 20l2 2"/></svg>`,
-  subway: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="15" rx="3"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M7 20l-2 2M17 20l2 2"/></svg>`,
+const MODES = {
+  manhattan: {
+    label: 'To Manhattan',
+    sub: 'Next bus at Grand & W. Beech',
+    upcomingLabel: 'Upcoming buses',
+    fetch: () => fetch('/api/bus/next?stop=H&n=6').then((r) => r.json()),
+    toItems: (data) => (data.items || []).map((b) => ({
+      epoch: b.epoch,
+      title: 'Long Beach Bus · Stop H → LIRR',
+      detail: 'Boards at Grand & W. Beech',
+      badges: [],
+    })),
+  },
+  longbeach: {
+    label: 'To Long Beach',
+    sub: 'Next LIRR from Penn',
+    upcomingLabel: 'Upcoming trains',
+    fetch: () => fetch('/api/lirr/next?dir=toLB&n=6').then((r) => r.json()),
+    toItems: (data) => (data.items || []).map((t) => ({
+      epoch: t.depEpoch,
+      title: `${t.fromName || 'Penn Station'} → ${t.toName || 'Long Beach'}`,
+      detail: trainDetail(t),
+      badges: trainBadges(t),
+    })),
+  },
 };
 
-async function fetchPlan(mode) {
-  if (state.inFlight) state.inFlight.abort();
-  const ctrl = new AbortController();
-  state.inFlight = ctrl;
-  try {
-    const r = await fetch(`/api/plan/${mode}`, { signal: ctrl.signal });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.json();
-  } finally {
-    state.inFlight = null;
+function trainDetail(t) {
+  const dur = Math.round((t.arrEpoch - t.depEpoch) / 60);
+  const arr = fmtClock(t.arrEpoch);
+  return `${dur} min · arrives ${arr}`;
+}
+
+function trainBadges(t) {
+  const b = [];
+  if (t.cancelled) b.push({ cls: 'badge-cancelled', text: 'Cancelled' });
+  else if (t.rtMatched) b.push({ cls: 'badge-live', text: 'Live' });
+  if (Math.abs(t.depDelaySec || 0) >= 60) {
+    const m = Math.round(t.depDelaySec / 60);
+    b.push({ cls: 'badge-delay', text: `${m > 0 ? '+' : ''}${m}m` });
   }
+  if (t.transferAt === 'JAM') b.push({ cls: 'badge-transfer', text: 'via Jamaica' });
+  if (t.peak) b.push({ cls: 'badge-peak', text: 'Peak' });
+  return b;
+}
+
+function fmtClock(epoch) {
+  return new Date(epoch * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
+}
+
+function fmtAmPmSplit(epoch) {
+  const s = fmtClock(epoch);
+  // "7:31 AM" -> ["7:31", "AM"]
+  const m = s.match(/^(.*?)\s*(AM|PM)$/i);
+  return m ? { time: m[1], ampm: m[2] } : { time: s, ampm: '' };
+}
+
+function fmtRelative(epoch) {
+  const diffMin = Math.round((epoch * 1000 - Date.now()) / 60000);
+  if (diffMin <= 0) return 'now';
+  if (diffMin < 60) return `in ${diffMin} min`;
+  const h = Math.floor(diffMin / 60);
+  const m = diffMin % 60;
+  return m === 0 ? `in ${h}h` : `in ${h}h ${m}m`;
 }
 
 function setHero(mode) {
-  if (mode === 'home') {
-    $('#hero-title').textContent = 'To Long Beach';
-    $('#hero-sub').textContent = 'Next LIRR from Penn';
-  } else {
-    $('#hero-title').textContent = 'To Manhattan';
-    $('#hero-sub').textContent = 'Next bus at Stop H';
-  }
+  const cfg = MODES[mode];
+  $('#hero-mode-label').textContent = cfg.label;
+  $('#hero-sub').textContent = cfg.sub;
+  $('#upcoming-label').textContent = cfg.upcomingLabel;
 }
 
 function setSegmented(mode) {
@@ -54,137 +101,29 @@ function setSegmented(mode) {
   });
 }
 
-function fmtClock(epoch) {
-  return new Date(epoch * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
-}
-function fmtDuration(secs) {
-  const m = Math.round(secs / 60);
-  if (m < 60) return `${m} min`;
-  return `${Math.floor(m / 60)}h ${m % 60}m`;
-}
-
-function renderHome(options) {
-  if (!options.length) return emptyState('No trains heading to Long Beach in range.');
-  return options.map((o, i) => renderHomeCard(o, i === 0)).join('');
-}
-
-function renderWork(options) {
-  if (!options.length) return emptyState('No buses paired with a Manhattan train in range.');
-  return options.map((o, i) => renderWorkCard(o, i === 0)).join('');
-}
-
-function emptyState(msg) {
-  return `<div class="empty">${msg}</div>`;
-}
-
-function trainBadges(train) {
-  const badges = [];
-  if (train.cancelled) badges.push('<span class="badge badge-cancelled">Cancelled</span>');
-  else if (train.rtMatched) badges.push('<span class="badge badge-live">Live</span>');
-  if (Math.abs(train.depDelaySec) >= 60) {
-    const min = Math.round(train.depDelaySec / 60);
-    badges.push(`<span class="badge badge-delay">${min > 0 ? '+' : ''}${min}m</span>`);
+function renderUpcoming(items) {
+  const container = $('#upcoming');
+  if (!items.length) {
+    container.innerHTML = '<div class="empty">Nothing scheduled in range.</div>';
+    return;
   }
-  if (train.transferAt === 'JAM') badges.push('<span class="badge badge-transfer">via Jamaica</span>');
-  return badges.join(' ');
-}
-
-function busBadges(bus) {
-  const badges = [];
-  if (bus.waitsForTrain) badges.push('<span class="badge badge-waits">Waits for train</span>');
-  return badges.join(' ');
-}
-
-function renderHomeCard(o, recommended) {
-  const noBus = o.noBus;
-  const trainDur = fmtDuration(o.train.arrEpoch - o.train.depEpoch);
-  return `
-    <article class="card ${recommended ? 'recommended' : ''}">
-      <span class="card-time-label">Train leaves Penn</span>
-      <div class="card-headline">
-        <div class="card-time">${fmtClock(o.train.depEpoch)}</div>
-        <div class="card-sub">→ Long Beach ${fmtClock(o.train.arrEpoch)} · ${trainDur}</div>
-      </div>
-
-      <div class="leg">
-        <div class="leg-icon train">${icons.train}</div>
-        <div class="leg-body">
-          <div class="leg-title">LIRR · ${o.train.fromName} → ${o.train.toName}</div>
-          <div class="leg-detail">${o.train.peak ? 'Peak · ' : ''}${trainDur} ride ${trainBadges(o.train)}</div>
+  // Hero already shows the very next one — list shows it again so the page reads top-to-bottom as a stack.
+  container.innerHTML = items.slice(0, 6).map((it, i) => {
+    const tm = fmtAmPmSplit(it.epoch);
+    const badges = (it.badges || []).map((b) => `<span class="badge ${b.cls}">${b.text}</span>`).join('');
+    return `
+      <div class="row ${i === 0 ? 'first' : ''}">
+        <div>
+          <div class="row-time">${tm.time}<span class="ampm">${tm.ampm}</span></div>
+          <div class="row-eta">${fmtRelative(it.epoch)}</div>
         </div>
-        <div class="leg-time">${fmtClock(o.train.depEpoch)}<span class="end">→ ${fmtClock(o.train.arrEpoch)}</span></div>
-      </div>
-
-      ${noBus ? `
-        <div class="no-bus-notice">No connecting Long Beach bus for this train. Walk or cab from the station.</div>
-      ` : `
-        <div class="leg">
-          <div class="leg-icon bus">${icons.bus}</div>
-          <div class="leg-body">
-            <div class="leg-title">Long Beach Bus · LIRR → Stop H</div>
-            <div class="leg-detail">${o.transferMin}-min transfer at LIRR ${busBadges(o.bus)}</div>
-          </div>
-          <div class="leg-time">${o.bus.label}<span class="end">→ ${fmtClock(o.arriveStopHEpoch)}</span></div>
+        <div class="row-meta">
+          <div class="row-title">${it.title}</div>
+          <div class="row-detail">${it.detail}${badges ? ` <span class="row-badges">${badges}</span>` : ''}</div>
         </div>
-
-        <div class="card-summary">
-          <div class="summary-cell"><span>Transfer slack</span><strong>${o.transferMin} min</strong></div>
-          <div class="summary-cell"><span>At Stop H</span><strong>${o.arriveStopHLabel}</strong></div>
-        </div>
-      `}
-    </article>
-  `;
-}
-
-function renderWorkCard(o, recommended) {
-  const trainDur = fmtDuration(o.train.arrEpoch - o.train.depEpoch);
-  return `
-    <article class="card ${recommended ? 'recommended' : ''}">
-      <span class="card-time-label">Bus at Stop H</span>
-      <div class="card-headline">
-        <div class="card-time">${o.bus.label}</div>
-        <div class="card-sub">→ office ≈ ${o.arriveOfficeLabel}</div>
       </div>
-
-      <div class="leg">
-        <div class="leg-icon bus">${icons.bus}</div>
-        <div class="leg-body">
-          <div class="leg-title">Long Beach Bus · Stop H → LIRR</div>
-          <div class="leg-detail">≈ 7 min to LIRR ${busBadges(o.bus)}</div>
-        </div>
-        <div class="leg-time">${o.bus.label}<span class="end">→ ${fmtClock(o.arriveLirrEpoch)}</span></div>
-      </div>
-
-      <div class="leg">
-        <div class="leg-icon train">${icons.train}</div>
-        <div class="leg-body">
-          <div class="leg-title">LIRR · ${o.train.fromName} → ${o.train.toName}</div>
-          <div class="leg-detail">${o.train.peak ? 'Peak · ' : ''}${trainDur} ride ${trainBadges(o.train)}</div>
-        </div>
-        <div class="leg-time">${fmtClock(o.train.depEpoch)}<span class="end">→ ${fmtClock(o.train.arrEpoch)}</span></div>
-      </div>
-
-      <div class="leg">
-        <div class="leg-icon subway">${icons.subway}</div>
-        <div class="leg-body">
-          <div class="leg-title">Subway · Penn → 20 West St (FiDi)</div>
-          <div class="leg-detail">≈ 25 min via 1/2/3 or A/C/E</div>
-        </div>
-        <div class="leg-time">${o.arriveOfficeLabel}</div>
-      </div>
-
-      <div class="card-summary">
-        <div class="summary-cell"><span>Train slack</span><strong>${o.transferMin} min</strong></div>
-        <div class="summary-cell"><span>At office</span><strong>${o.arriveOfficeLabel}</strong></div>
-      </div>
-    </article>
-  `;
-}
-
-function setCountdownAnchor(mode, options) {
-  if (!options || !options.length) { state.countdownEpoch = null; return; }
-  const first = options[0];
-  state.countdownEpoch = mode === 'work' ? first.bus?.epoch : first.train?.depEpoch;
+    `;
+  }).join('');
 }
 
 function tickCountdown() {
@@ -199,7 +138,7 @@ function tickCountdown() {
   }
   const diffMs = state.countdownEpoch * 1000 - Date.now();
   if (diffMs <= 0) {
-    el.textContent = 'Now';
+    el.textContent = 'NOW';
     el.classList.add('now');
     when.textContent = '';
     return;
@@ -214,28 +153,39 @@ function tickCountdown() {
     const h = Math.floor(mins / 60);
     el.textContent = `${h}h ${String(mins % 60).padStart(2, '0')}m`;
   }
-  const target = new Date(state.countdownEpoch * 1000);
-  when.textContent = `at ${target.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' })}`;
+  when.textContent = `Arrives ${fmtClock(state.countdownEpoch)}`;
 }
 
 async function render() {
   setHero(state.mode);
   setSegmented(state.mode);
-  const main = $('#options');
-  if (!main.children.length || !main.querySelector('.card')) {
-    main.innerHTML = '<div class="skeleton-card"></div><div class="skeleton-card"></div><div class="skeleton-card"></div>';
+
+  const container = $('#upcoming');
+  if (!container.querySelector('.row')) {
+    container.innerHTML = '<div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div>';
   }
+
   try {
-    const data = await fetchPlan(state.mode);
-    main.innerHTML = state.mode === 'home' ? renderHome(data.options) : renderWork(data.options);
-    setCountdownAnchor(state.mode, data.options);
+    if (state.inFlight) state.inFlight.abort();
+    const ctrl = new AbortController();
+    state.inFlight = ctrl;
+    const cfg = MODES[state.mode];
+    const raw = await cfg.fetch();
+    const items = cfg.toItems(raw)
+      .filter((it) => it.epoch * 1000 > Date.now() - 30_000)
+      .sort((a, b) => a.epoch - b.epoch);
+    state.items = items;
+    state.countdownEpoch = items[0]?.epoch || null;
+    renderUpcoming(items);
     tickCountdown();
     state.lastFetch = Date.now();
     updateStatus(true);
   } catch (e) {
     if (e.name === 'AbortError') return;
-    main.innerHTML = `<div class="empty">Couldn't load plan: ${e.message}<br><br>Tap Refresh.</div>`;
+    container.innerHTML = `<div class="empty">Couldn't load: ${e.message}<br><br>Tap Refresh.</div>`;
     updateStatus(false);
+  } finally {
+    state.inFlight = null;
   }
 }
 
@@ -243,7 +193,7 @@ function updateStatus(ok) {
   const eyebrow = $('.hero-eyebrow');
   const label = $('#rt-status');
   eyebrow.classList.toggle('offline', !ok);
-  label.textContent = ok ? 'Live · MTA real-time' : 'Offline';
+  label.textContent = ok ? 'Live' : 'Offline';
   const lu = $('#last-updated');
   lu.textContent = ok ? `Updated ${new Date().toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : 'Stale';
 }
@@ -251,6 +201,9 @@ function updateStatus(ok) {
 function bindEvents() {
   $$('.seg').forEach((b) => b.addEventListener('click', () => {
     state.mode = b.dataset.mode;
+    const url = new URL(location.href);
+    url.searchParams.set('mode', state.mode);
+    history.replaceState(null, '', url);
     render();
   }));
   $('#refresh').addEventListener('click', async () => {

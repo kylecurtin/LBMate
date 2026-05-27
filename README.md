@@ -1,19 +1,19 @@
 # LBMate
 
-An iOS-style PWA for commuting between **the Sandcastles** (730 W Broadway, Long Beach NY) and **20 West St, FiDi Manhattan**.
+A PWA for commuting between **the Sandcastles** (730 W Broadway, Long Beach NY) and **20 West St, FiDi Manhattan**, with a Long Beach coastal theme — ocean-deep navy, sunset coral, sandy cream.
 
-Pulls live LIRR data from the MTA GTFS-realtime feed and pairs each train with the optimal Long Beach municipal bus to/from your stop (**Stop H — Grand & W. Beech**).
+Pulls live LIRR data from the MTA GTFS-realtime feed and ties the Long Beach municipal bus schedule (Stop H — **Grand & W. Beech**) into a single anchor countdown per direction.
 
 ## What it does
 
-The hero is a **live ticking countdown** to one real transit anchor:
+The hero is a **live ticking countdown** to one real transit anchor per mode:
 
-- **To Manhattan** — countdown to the next bus at Stop H. Cards show that bus → the LIRR train it catches → subway → office arrival estimate.
-- **To Long Beach** — countdown to the next LIRR departure from Penn. Cards show that train → the Long Beach bus it pairs with → arrival time at Stop H.
+- **To Manhattan** — countdown to the next bus at Grand & W. Beech.
+- **To Long Beach** — countdown to the next LIRR departure from Penn.
 
-Pairing logic is trains-as-gate: a bus only shows if it connects to an upcoming train. Live MTA real-time overlay marks delays / cancellations on the train card. Long Beach municipal bus schedule is baked in from the [city brochure PDF](https://www.longbeachny.gov/transportation), and the app uses the **Sunday/weekend schedule on federal holidays** (fixed and floating).
+Below the hero is a flat list of the next few of the same thing (next buses at Stop H, or next LIRR trains to Long Beach, with live MTA badges for delays / cancellations / peak / via-Jamaica). No chained walk + subway + buffer estimates — you mentally subtract your own walk time from the one anchor you trust.
 
-The walk between home and Stop H is intentionally **not modeled** — the countdown shows the real transit time, you subtract your own walk time.
+The Long Beach bus schedule uses the **Sunday/weekend schedule on federal holidays** (fixed and floating).
 
 ## Run locally
 
@@ -44,27 +44,27 @@ If a deploy doesn't show up in an installed PWA, bump the `CACHE` const in `publ
 ## Architecture
 
 ```
-public/         iOS-styled PWA shell (HTML/CSS/JS), manifest, service worker
+public/         Long Beach themed PWA shell (HTML/CSS/JS), manifest, service worker
 server.js       Express + static + JSON APIs
 lib/gtfs.js     LIRR static GTFS loader (Long Beach branch trips only)
 lib/realtime.js MTA GTFS-realtime fetcher (25s cache)
 lib/bus.js      Long Beach bus schedule lookup (weekday / weekend + holidays)
-lib/planner.js  Bus↔train pairing logic
+lib/planner.js  Bus↔train pairing logic (dormant — kept for reference, not used by the current frontend)
 data/gtfs/      MTA LIRR static GTFS (refresh every few weeks)
-data/bus_schedule.json  Baked-in West End loop times
+data/bus_schedule.json   Generated from Long Beach Bus Schedule.xlsx
+scripts/build_bus_schedule.py   xlsx → json generator
+Long Beach Bus Schedule.xlsx    Source of truth for bus times (hand-maintained)
 ```
 
 ### API endpoints
 
 | | |
 |---|---|
-| `GET /api/plan/work` | "To Manhattan" — buses at Stop H paired with the next LIRR train to Penn |
-| `GET /api/plan/home` | "To Long Beach" — trains NYK→LBH paired with the next bus from LIRR |
-| `GET /api/lirr/next?dir=toCity\|toLB&n=6` | Raw upcoming LIRR options with RT overlay |
-| `GET /api/bus/next?stop=H\|A&n=6` | Raw upcoming bus times at a given stop |
+| `GET /api/lirr/next?dir=toCity\|toLB&n=6` | Upcoming LIRR departures with realtime overlay (consumed by the "To Long Beach" view) |
+| `GET /api/bus/next?stop=H\|A&n=6` | Upcoming bus times at a given stop (consumed by the "To Manhattan" view) |
+| `GET /api/plan/work` | (legacy) Buses at Stop H paired with the next LIRR train to Penn — no longer used by the shell |
+| `GET /api/plan/home` | (legacy) Trains NYK→LBH paired with the next bus from LIRR — no longer used by the shell |
 | `GET /api/health` | Liveness |
-
-(Internal route names `home`/`work` predate the "To Long Beach"/"To Manhattan" relabel — kept for backwards compatibility with the SW-cached shell.)
 
 ### Refreshing the LIRR static GTFS
 
@@ -77,13 +77,17 @@ rm data/gtfs/* && unzip -d data/gtfs /tmp/lirr.zip && rm data/gtfs/shapes.txt
 
 ### Refreshing the bus schedule
 
-`data/bus_schedule.json` is hand-transcribed from the City of Long Beach transportation brochure. When a new brochure ships, re-pull from longbeachny.gov and update both `weekday.runs` and `weekend.runs`. The `waitsForTrain: true` flag is the `•` bullet next to the A (LIRR) column in the PDF. If the brochure changes which federal holidays it observes, update `FIXED_HOLIDAYS` and `isFloatingHolidayNy` in `lib/bus.js`.
+The source of truth is `Long Beach Bus Schedule.xlsx` at the repo root — two pairs of columns (weekday A/H, weekend A/H), each row a single loop run. `data/bus_schedule.json` is generated from it. When a new brochure ships, update the xlsx and regenerate:
 
-## Assumptions to tune
+```bash
+python3 -m venv /tmp/xlsx_env && /tmp/xlsx_env/bin/pip install openpyxl
+/tmp/xlsx_env/bin/python3 scripts/build_bus_schedule.py
+```
 
-Constants live at the top of `lib/planner.js`:
+If the brochure changes which federal holidays it observes, update `FIXED_HOLIDAYS` and `isFloatingHolidayNy` in `lib/bus.js`.
 
-- `SUBWAY_PENN_TO_FIDI_MIN = 25`
-- `BUS_H_TO_LIRR_MIN = 7`
-- `MIN_BUS_TO_TRAIN_TRANSFER_MIN = 4`
-- `MIN_TRAIN_TO_BUS_TRANSFER_MIN = 1`
+## Design notes
+
+- One anchor per mode (next bus / next train). No chained "leave home" estimates, no subway time math in the UI. You subtract your own walk.
+- Both endpoints of the commute are "home" — modes are labeled by destination (To Manhattan / To Long Beach), not by purpose (work / home).
+- Visual palette tokens live at the top of `public/styles.css` (`--ocean-deep`, `--sunset-*`, `--sand*`, etc.) if you want to retune.
